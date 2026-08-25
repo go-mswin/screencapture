@@ -31,6 +31,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/go-mswin/win32"
 )
 
 func requireLive(t testing.TB) {
@@ -367,7 +369,7 @@ func BenchmarkGDIReadback(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer src.free()
-			selectObject(srcDC, uintptr(src.bmp))
+			selectObject(srcDC, win32.HANDLE(src.bmp))
 			// Fill the source so the blit moves real data rather than a page
 			// of zeros the memory manager can shortcut.
 			for i := range src.pix {
@@ -383,7 +385,7 @@ func BenchmarkGDIReadback(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer dst.free()
-			selectObject(dstDC, uintptr(dst.bmp))
+			selectObject(dstDC, win32.HANDLE(dst.bmp))
 
 			b.SetBytes(int64(size.w * size.h * 4))
 			b.ReportAllocs()
@@ -422,7 +424,7 @@ func BenchmarkScreenReadback(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer dib.free()
-	selectObject(memDC, uintptr(dib.bmp))
+	selectObject(memDC, win32.HANDLE(dib.bmp))
 	b.SetBytes(int64(d.PixelWidth * d.PixelHeight * 4))
 	b.ReportAllocs()
 	b.ResetTimer()

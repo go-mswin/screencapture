@@ -14,10 +14,10 @@ package main
 // back a static buffer looks perfectly healthy on every other check; this is
 // the one that catches it.
 //
-// The window itself is built on github.com/go-mswin/win32 — the fleet's owned
-// Win32 foundation — rather than on hand-rolled bindings. Only the four
-// procedures win32 does not yet wrap (ShowWindow, UpdateWindow, GetDC,
-// ReleaseDC) are bound here, off win32's own shared user32 handle.
+// The window itself is built entirely on github.com/go-mswin/win32 — the
+// fleet's owned Win32 foundation. Nothing here binds a procedure of its own:
+// the window creation, the message pump, the show/topmost calls, the device
+// context and the BGRA blit all come from there.
 
 import (
 	"fmt"
@@ -128,22 +128,20 @@ func (a *animator) windowThread() {
 	// is exactly what a fresh VM is — a non-topmost animator is simply not on
 	// screen and the assertion fails for a reason that has nothing to do with
 	// the capture.
-	const wsExTopmost = 0x00000008
-	hwnd, err := win32.CreateWindowEx(wsExTopmost, class, title, win32.WSOverlappedWindow,
+	hwnd, err := win32.CreateWindowEx(win32.WSExTopmost, class, title, win32.WSOverlappedWindow,
 		40, 40, int32(a.w), int32(a.h), 0, 0, win32.GetModuleHandle(nil), nil)
 	if err != nil {
 		a.ready <- fmt.Errorf("CreateWindowEx: %w", err)
 		return
 	}
 	a.hwnd = hwnd
-	procShowWindow.Call(uintptr(hwnd), uintptr(win32.SWShow))
-	procUpdateWindow.Call(uintptr(hwnd))
+	win32.ShowWindow(hwnd, win32.SWShow)
+	win32.UpdateWindow(hwnd)
 	// HWND_TOPMOST again after the window is mapped: a window created topmost
 	// can still be pushed down by whatever had the foreground.
-	const hwndTopmost = ^uintptr(0) // -1
-	procSetWindowPos.Call(uintptr(hwnd), hwndTopmost, 0, 0, 0, 0,
-		uintptr(win32.SWPNoZOrder&0|0x0001|0x0002|0x0040)) // SWP_NOSIZE|SWP_NOMOVE|SWP_SHOWWINDOW
-	procSetForeground.Call(uintptr(hwnd))
+	win32.SetWindowPos(hwnd, win32.HWNDTopmost, 0, 0, 0, 0,
+		win32.SWPNoSize|win32.SWPNoMove|win32.SWPShowWindow)
+	win32.SetForegroundWindow(hwnd)
 	a.ready <- nil
 
 	// A goroutine posts WM_QUIT when the animator is stopped, so the pump ends
@@ -194,13 +192,13 @@ func (a *animator) paintLoop() {
 			}
 		}
 		win32.PackBGRA(bgra, rgba)
-		dc, _, _ := procGetDC.Call(uintptr(a.hwnd))
-		if dc == 0 {
+		dc, err := win32.GetDC(a.hwnd)
+		if err != nil {
 			continue
 		}
-		win32.StretchDIBitsBGRA(win32.HDC(dc), 0, 0, int32(a.w), int32(a.h),
+		win32.StretchDIBitsBGRA(dc, 0, 0, int32(a.w), int32(a.h),
 			int32(a.w), int32(a.h), bgra)
-		procReleaseDC.Call(uintptr(a.hwnd), dc)
+		win32.ReleaseDC(a.hwnd, dc)
 	}
 }
 
