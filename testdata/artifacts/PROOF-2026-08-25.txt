@@ -1,0 +1,127 @@
+go-mswin/screencapture — live proof on the Win11 ARM64 QEMU VM, 2026-08-25
+=========================================================================
+
+Machine: Windows 11 Pro 25H2 (10.0.26200) ARM64 under QEMU 11 + HVF on Apple
+silicon. Display: QEMU `ramfb` behind the Microsoft Basic Display Driver,
+800x600, NO GPU. Reached from the Mac over ssh :2222; every capture run was
+launched INTO THE INTERACTIVE SESSION with `schtasks /ru dev /it`, because an
+ssh session on Windows is session 0 and has no desktop (see "session 0" below).
+
+Everything cross-compiled on the Mac: CGO_ENABLED=0 GOOS=windows GOARCH=arm64.
+
+
+1. CONTROL FIRST — an instrument that is not this package
+--------------------------------------------------------
+QEMU's own `screendump` over the monitor socket reads the ramfb framebuffer
+directly, without going through Windows at all. A GDI display capture taken at
+the same moment was compared to it PIXEL BY PIXEL:
+
+    pixels differing between the GDI capture and the QEMU screendump: 0 of 480000
+
+Zero. An independent instrument agrees with this package exactly. That also
+settles channel order (blue renders blue, not red) and orientation (the title
+text is the right way up, so the DIB is top-down) without a second experiment.
+
+
+2. THE TWO BACKENDS AGREE WITH EACH OTHER
+-----------------------------------------
+The same still desktop captured through DXGI Desktop Duplication and through
+GDI BitBlt, each written out as a PNG:
+
+    b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8  display-duplication.png
+    b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8  display-gdi.png
+
+Byte-identical. Only the duplication one is committed; the GDI file is
+reproducible and had the same hash.
+
+
+3. THE LIVE SUITE — 7 of 7 PASS
+-------------------------------
+`go test -tags integration -run Live -v`, SCREENCAPTURE_LIVE=1, session 1:
+
+  TestLiveDisplays                PASS  \\.\DISPLAY1 800x600 @96dpi, dxgi=0/0, duplicable
+  TestLiveWindows                 PASS  titles, classes, exe names, DWM cloak state
+  TestLiveCaptureGDI              PASS  800x600, not uniform, read-back 34.3 ms
+  TestLiveCaptureDuplication      PASS  800x600, not uniform, read-back 4.57 ms,
+                                        change-wait 12.5 ms, stride 3200 (+0)
+  TestLiveStrideIsCarried         PASS  every Row() is exactly Width*4 bytes
+  TestLiveFrameBorrowMovesWithTake PASS the ring rotates: later frames come back
+                                        at a DIFFERENT address, so the capture is
+                                        never writing into the borrowed buffer
+  TestLiveCloseIsIdempotent       PASS
+  TestLiveStructSizesAgainstTheOS PASS  GetMonitorInfoW ACCEPTED the Go
+                                        MONITORINFOEXW (it rejects a wrong
+                                        cbSize) and szDevice read back correctly
+
+No lane was skipped as a pass; each live test skips ONLY when SCREENCAPTURE_LIVE
+is unset.
+
+
+4. THE CONTENT CHANGES — the assertion that catches a static buffer
+-------------------------------------------------------------------
+The desktop was driven from OUTSIDE the process entirely: QEMU's virtual
+keyboard, over the monitor socket, sending tab / shift-tab into whatever owned
+the screen. Nothing about the change came from this package.
+
+  duplication, 18.3 s:  50 frames delivered, 45 DIFFERED from the one before,
+                        7470 pixels changed, 141 idle polls, 5 wait timeouts,
+                        0 duplication restarts
+  gdi,          7.8 s: 300 frames delivered, 15 DIFFERED (the desktop only
+                        changed 15 times), 0 idle polls — GDI is poll-driven and
+                        cannot tell you nothing moved
+  window,       2.9 s: 120 frames delivered, 120 DIFFERED, 32 083 200 pixels
+                        changed — an ANIMATED WINDOW THAT WAS COMPLETELY
+                        OCCLUDED on screen, rendered through DWM by
+                        PrintWindow(PW_RENDERFULLCONTENT)
+
+
+5. MEASUREMENTS
+---------------
+Frame() — the call a compositor makes once per rendered frame:
+
+    BenchmarkFrame-4   225069488   16.11 ns/op   0 B/op   0 allocs/op
+
+225 million iterations. Zero allocations, as the borrow contract requires. (The
+macOS sibling measures 52 ns/op, 0 allocs.)
+
+Read-back of the whole 800x600 primary display, measured with -benchmem:
+
+    BenchmarkScreenReadback-4   30   23632690 ns/op   81.24 MB/s   0.4800 Mpx
+
+23.6 ms for 0.48 megapixels — 49 ms/Mpx. THIS NUMBER IS THE VM, NOT THE CODE:
+81 MB/s is what reading back from an emulated ramfb through the Microsoft Basic
+Display Driver costs. It is 280x slower than the same blit between two DIBs.
+
+The DIB-section write path alone, memory to memory, which is the part that does
+NOT depend on the display hardware:
+
+    BenchmarkGDIReadback/800x600-4     30     74982 ns/op  25606 MB/s  0.48 Mpx
+    BenchmarkGDIReadback/1920x1080-4   30    358674 ns/op  23125 MB/s  2.07 Mpx
+    BenchmarkGDIReadback/2560x1440-4   30    789925 ns/op  18667 MB/s  3.69 Mpx
+    BenchmarkGDIReadback/3840x2160-4   30   2165150 ns/op  15323 MB/s  8.29 Mpx
+
+So at 4K the DIB write costs 2.17 ms and fits a 16.6 ms budget with room to
+spare. What is NOT measured anywhere here is a real 4K SCREEN read-back on real
+hardware: the only Windows machine available has an emulated 800x600 basic
+display adapter, and extrapolating its 49 ms/Mpx to 4K (which would give
+~408 ms) would describe QEMU, not Windows. See the README's "what is not
+proven".
+
+
+6. SESSION 0 — the trap
+-----------------------
+Run over plain ssh, the same binary reports a display called `WinDisc`,
+1024x768, dxgi=-1/-1, and enumerates ZERO windows. That is the phantom desktop
+of the non-interactive session, and a capture of it SUCCEEDS while showing
+nothing. It is why the live suite is gated on SCREENCAPTURE_LIVE and why the
+runs above go through `schtasks /it`.
+
+
+ARTEFACTS
+---------
+  display-duplication.png     the desktop, captured through IDXGIOutputDuplication
+  window-printwindow.png      a fully occluded animated window, captured through
+                              PrintWindow(PW_RENDERFULLCONTENT) — the purple
+                              gradient and the white sweeping block are drawn by
+                              wsccheck's own animator
+  qemu-screendump-control.png QEMU's independent screendump used as the control

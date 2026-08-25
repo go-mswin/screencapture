@@ -1,0 +1,166 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A workflow that fails to PARSE reports nothing at all — no red cross, no
+  # run, just silence that reads exactly like success. actionlint is the only
+  # thing that catches it.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"; echo "$unformatted"
+            exit 1
+          fi
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  # The real Windows lane. A GitHub runner has NO interactive desktop session,
+  # so Desktop Duplication is normally refused there and a display capture sees
+  # the phantom session-0 desktop; that is a property of the runner, not a
+  # defect, and it is why the live suite is behind -tags integration plus
+  # SCREENCAPTURE_LIVE and does not run here. What DOES run here is the whole
+  # portable layer plus everything that talks to the real Win32 API without
+  # needing a desktop: the DLL and procedure resolution, the monitor and window
+  # enumeration, the DXGI adapter walk, and every failure path.
+  windows:
+    name: windows/${{ matrix.arch }} (real Win32, CGO=0)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: windows-latest }
+          - { arch: arm64, runner: windows-11-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Vet, including the unsafeptr check this package leans on
+        run: go vet ./...
+        env:
+          CGO_ENABLED: "0"
+      - name: The integration suite must at least COMPILE
+        run: go vet -tags integration ./...
+        env:
+          CGO_ENABLED: "0"
+      - name: Build
+        run: go build ./...
+        env:
+          CGO_ENABLED: "0"
+      - name: Test
+        run: go test -count=1 -coverprofile=cover.out ./...
+        env:
+          CGO_ENABLED: "0"
+      - name: Race (CGO=1)
+        run: go test -race -count=1 ./...
+      # A runner has no desktop, so this reports what it CAN see rather than
+      # asserting a capture. It is here because "wsccheck ran and printed a
+      # display list" is real evidence the Win32 glue resolves and works.
+      - name: Enumerate whatever this runner has
+        run: go run ./cmd/wsccheck -list
+        env:
+          CGO_ENABLED: "0"
+        continue-on-error: true
+
+  # Every non-Windows platform must COMPILE and answer ErrUnsupported rather
+  # than failing to build: a consumer cross-compiles this without thinking
+  # about it.
+  cross:
+    name: cross ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go build ./...
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+      - run: go vet ./...
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
+  # The coverage gate. It is on the PORTABLE files, not the total: the Win32
+  # and COM bindings cannot be covered without a desktop, and a total-coverage
+  # gate would either be a lie or force a session the runner cannot hold.
+  portable:
+    name: linux (stubs + 100% portable coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test -count=1 -coverprofile=cover.out ./...
+        env:
+          CGO_ENABLED: "0"
+      - run: go test -race -count=1 ./...
+      - name: 100% coverage gate on every portable file
+        shell: bash
+        run: |
+          go tool cover -func=cover.out \
+            | grep -E '/(screencapture|structs|ring|screencapture_other)\.go:' > portable.txt
+          cat portable.txt
+          if grep -v '100.0%' portable.txt; then
+            echo "::error::the portable layer is below 100% (lines above)"; exit 1
+          fi
+          echo "portable layer: 100%"
+      - name: Coverage summary
+        run: go tool cover -func=cover.out | tail -1
+
+  macos:
+    name: macos (stub tests)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test -count=1 ./...
+        env:
+          CGO_ENABLED: "0"
