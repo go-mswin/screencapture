@@ -3,6 +3,7 @@
 [![ci](https://github.com/go-mswin/screencapture/actions/workflows/ci.yml/badge.svg)](https://github.com/go-mswin/screencapture/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/go-mswin/screencapture.svg)](https://pkg.go.dev/github.com/go-mswin/screencapture)
 [![Go Report Card](https://goreportcard.com/badge/github.com/go-mswin/screencapture)](https://goreportcard.com/report/github.com/go-mswin/screencapture)
+[![Coverage](https://img.shields.io/badge/coverage-100%25%20portable%20layer-1a7f37)](#testing)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
 Capture Windows displays and windows as raw BGRA pixels, in **pure Go with
@@ -277,6 +278,17 @@ State plainly rather than implied:
 - **`ExcludeWindows` has not been exercised live.**
 - **HDR / 10-bit surfaces are refused**, not converted: duplication reporting a
   format other than `B8G8R8A8_UNORM` is `ErrBackendUnavailable`.
+
+### Send us hardware
+
+Every line under **What is NOT proven** is one piece of hardware away from
+being a measurement: a machine with a real GPU would exercise the
+`CopyResource` + staging-texture duplication path, a real 4K panel would replace
+an extrapolation with a number, a second monitor would exercise the
+adapter/output matching, a rotated panel would settle what arrives. If you want
+one of them settled rather than qualified, **send us the hardware** and what it
+shows will be recorded here, with its own proof record. Until then, an
+unverified line says so.
 
 ## Testing
 
