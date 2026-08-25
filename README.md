@@ -2,7 +2,6 @@
 
 [![ci](https://github.com/go-mswin/screencapture/actions/workflows/ci.yml/badge.svg)](https://github.com/go-mswin/screencapture/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/go-mswin/screencapture.svg)](https://pkg.go.dev/github.com/go-mswin/screencapture)
-[![Go Report Card](https://goreportcard.com/badge/github.com/go-mswin/screencapture)](https://goreportcard.com/report/github.com/go-mswin/screencapture)
 [![Coverage](https://img.shields.io/badge/coverage-100%25%20portable%20layer-1a7f37)](#testing)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
