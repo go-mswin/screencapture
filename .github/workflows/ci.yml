@@ -65,29 +65,41 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      # Every step on this lane runs under bash rather than the default
+      # PowerShell. PowerShell's native-command parser mangles an argument of
+      # the form -flag=value.ext -- `-coverprofile=cover.out` reached go as a
+      # package pattern named `.out`, and the whole test step failed with
+      # "FAIL .out [setup failed]", which says nothing about the cause.
       - name: Vet, including the unsafeptr check this package leans on
         run: go vet ./...
+        shell: bash
         env:
           CGO_ENABLED: "0"
       - name: The integration suite must at least COMPILE
         run: go vet -tags integration ./...
+        shell: bash
         env:
           CGO_ENABLED: "0"
       - name: Build
         run: go build ./...
+        shell: bash
         env:
           CGO_ENABLED: "0"
       - name: Test
         run: go test -count=1 -coverprofile=cover.out ./...
+        shell: bash
         env:
           CGO_ENABLED: "0"
       - name: Race (CGO=1)
         run: go test -race -count=1 ./...
+        shell: bash
       # A runner has no desktop, so this reports what it CAN see rather than
       # asserting a capture. It is here because "wsccheck ran and printed a
-      # display list" is real evidence the Win32 glue resolves and works.
+      # display list" is real evidence the Win32 glue resolves and works: the
+      # DLLs load, the procedures resolve, EnumDisplayMonitors answers.
       - name: Enumerate whatever this runner has
         run: go run ./cmd/wsccheck -list
+        shell: bash
         env:
           CGO_ENABLED: "0"
         continue-on-error: true
@@ -162,5 +174,6 @@ jobs:
         with:
           go-version: stable
       - run: go test -count=1 ./...
+        shell: bash
         env:
           CGO_ENABLED: "0"
