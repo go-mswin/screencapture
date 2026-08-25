@@ -161,6 +161,12 @@ wsccheck -capture -animate -out C:\proof
 wsccheck -capture -backend gdi -frames 300 -out C:\proof
 ```
 
+`cmd/pngdiff` compares two PNGs pixel by pixel and exits non-zero when they
+differ, so a claim in the proof record can be re-run rather than believed. Its
+`-rows` flag reports the difference per band of rows, which is what
+distinguishes "two instruments disagree" from "two moments of the same screen":
+chrome agreeing exactly while only a content area differs is the second one.
+
 The live Go suite is behind `//go:build windows && integration` plus
 `SCREENCAPTURE_LIVE=1`:
 
@@ -182,10 +188,20 @@ On a Windows 11 ARM64 QEMU VM (`ramfb` + Microsoft Basic Display Driver,
 [`testdata/artifacts/PROOF-2026-08-25.txt`](testdata/artifacts/PROOF-2026-08-25.txt):
 
 - **A GDI capture matched QEMU's own independent `screendump` of the
-  framebuffer in 0 of 480000 pixels.** An instrument that is not this package
-  agrees exactly.
+  framebuffer in 0 of 480000 pixels**, and so did a duplication capture. An
+  instrument that is not this package agrees exactly. **Check it yourself** —
+  the three PNGs are a matched set, all of the same motionless desktop within
+  the same ten seconds:
+
+  ```
+  go run ./cmd/pngdiff testdata/artifacts/display-gdi.png \
+                       testdata/artifacts/qemu-screendump-control.png
+  ```
+
+  `0 of 480000 pixels differ (0.00%), max deviation 0`. CI runs the same three
+  comparisons, so the record cannot drift away from the files.
 - **Duplication and GDI produced byte-identical PNGs** of the same still
-  desktop.
+  desktop — the same `sha256`, not merely equal images.
 - **The content changes**, driven from outside the process by QEMU's virtual
   keyboard: duplication 45 of 50 frames differed with 141 correctly-idle polls;
   GDI 15 of 300 (the desktop only changed 15 times); an occluded animated
@@ -195,10 +211,14 @@ On a Windows 11 ARM64 QEMU VM (`ramfb` + Microsoft Basic Display Driver,
   `MONITORINFOEXW` (it rejects a wrong `cbSize`, so acceptance is direct
   evidence the struct layout is right).
 
-Artefacts: [`display-duplication.png`](testdata/artifacts/display-duplication.png)
-(the desktop through `IDXGIOutputDuplication`) and
-[`window-printwindow.png`](testdata/artifacts/window-printwindow.png) (a fully
-occluded animated window through `PrintWindow(PW_RENDERFULLCONTENT)`).
+Artefacts — the first three are the matched set:
+[`display-gdi.png`](testdata/artifacts/display-gdi.png),
+[`display-duplication.png`](testdata/artifacts/display-duplication.png) and
+[`qemu-screendump-control.png`](testdata/artifacts/qemu-screendump-control.png).
+[`window-printwindow.png`](testdata/artifacts/window-printwindow.png) is a
+fully occluded animated window through `PrintWindow(PW_RENDERFULLCONTENT)`; it
+is from a different run and has no control, so it illustrates rather than
+proves.
 
 ### What is NOT proven
 
