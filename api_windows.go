@@ -55,21 +55,11 @@ var (
 // The procedures, bound off go-mswin/win32's shared DLL handles where the DLL
 // is one it already owns.
 var (
-	procGetDC                     = win32.User32.NewProc("GetDC")
-	procReleaseDC                 = win32.User32.NewProc("ReleaseDC")
 	procEnumDisplayMonitors       = win32.User32.NewProc("EnumDisplayMonitors")
 	procGetMonitorInfoW           = win32.User32.NewProc("GetMonitorInfoW")
 	procMonitorFromWindow         = win32.User32.NewProc("MonitorFromWindow")
 	procEnumWindows               = win32.User32.NewProc("EnumWindows")
-	procGetWindowTextW            = win32.User32.NewProc("GetWindowTextW")
-	procGetWindowTextLengthW      = win32.User32.NewProc("GetWindowTextLengthW")
-	procGetClassNameW             = win32.User32.NewProc("GetClassNameW")
 	procGetWindowThreadProcessId  = win32.User32.NewProc("GetWindowThreadProcessId")
-	procIsWindow                  = win32.User32.NewProc("IsWindow")
-	procIsWindowVisible           = win32.User32.NewProc("IsWindowVisible")
-	procIsIconic                  = win32.User32.NewProc("IsIconic")
-	procGetForegroundWindow       = win32.User32.NewProc("GetForegroundWindow")
-	procGetWindowRect             = win32.User32.NewProc("GetWindowRect")
 	procPrintWindow               = win32.User32.NewProc("PrintWindow")
 	procGetCursorInfo             = win32.User32.NewProc("GetCursorInfo")
 	procGetIconInfo               = win32.User32.NewProc("GetIconInfo")
@@ -77,22 +67,11 @@ var (
 	procSetWindowDisplayAffinity  = win32.User32.NewProc("SetWindowDisplayAffinity")
 	procGetWindowDisplayAffinity  = win32.User32.NewProc("GetWindowDisplayAffinity")
 	procSetProcessDPIAwarenessCtx = win32.User32.NewProc("SetProcessDpiAwarenessContext")
-	procGetWindowDC               = win32.User32.NewProc("GetWindowDC")
-	procGetWindowLongPtrW         = win32.User32.NewProc("GetWindowLongPtrW")
-	procCreateCompatibleDC        = win32.Gdi32.NewProc("CreateCompatibleDC")
-	procDeleteDC                  = win32.Gdi32.NewProc("DeleteDC")
 	procCreateDIBSection          = win32.Gdi32.NewProc("CreateDIBSection")
-	procDeleteObject              = win32.Gdi32.NewProc("DeleteObject")
-	procSelectObject              = win32.Gdi32.NewProc("SelectObject")
-	procBitBlt                    = win32.Gdi32.NewProc("BitBlt")
-	procStretchBlt                = win32.Gdi32.NewProc("StretchBlt")
-	procSetStretchBltMode         = win32.Gdi32.NewProc("SetStretchBltMode")
-	procPatBlt                    = win32.Gdi32.NewProc("PatBlt")
 	procGetDpiForMonitor          = modShcore.NewProc("GetDpiForMonitor")
 	procDwmGetWindowAttribute     = modDwmapi.NewProc("DwmGetWindowAttribute")
 	procCreateDXGIFactory1        = modDXGI.NewProc("CreateDXGIFactory1")
 	procD3D11CreateDevice         = modD3D11.NewProc("D3D11CreateDevice")
-	procGetSystemMetrics          = win32.User32.NewProc("GetSystemMetrics")
 )
 
 // Available reports whether this build can capture at all. On Windows it
@@ -150,63 +129,46 @@ func lastError(op string) error {
 // GDI device contexts and DIB sections
 // ---------------------------------------------------------------------------
 
-// hdc is a GDI device context handle.
-type hdc uintptr
-
-// hbitmap is a GDI bitmap handle.
-type hbitmap uintptr
+// hdc and hbitmap are go-mswin/win32's HDC and HBITMAP, aliased rather than
+// redeclared so a handle can cross between this package and win32 without a
+// conversion at every call.
+type (
+	hdc     = win32.HDC
+	hbitmap = win32.HBITMAP
+)
 
 // screenDC returns the device context of the whole virtual screen. Its
 // coordinate origin is the top-left of the PRIMARY monitor, so a monitor
 // placed above or to the left of it is at negative coordinates and a BitBlt
 // source offset for that monitor is negative too. That is correct and must not
 // be clamped.
-func screenDC() (hdc, error) {
-	r, _, _ := procGetDC.Call(0)
-	if r == 0 {
-		return 0, lastError("GetDC(NULL)")
-	}
-	return hdc(r), nil
-}
+func screenDC() (hdc, error) { return win32.GetDC(0) }
 
 // releaseScreenDC gives a screen DC back. A DC obtained from GetDC must be
 // released with ReleaseDC, not DeleteDC; leaking them exhausts a small
 // per-session pool and eventually every GDI call in the session fails.
-func releaseScreenDC(h hdc) { procReleaseDC.Call(0, uintptr(h)) }
-
-// windowDC returns the device context of a window, including its frame.
-func windowDC(hwnd uintptr) (hdc, error) {
-	r, _, _ := procGetWindowDC.Call(hwnd)
-	if r == 0 {
-		return 0, lastError("GetWindowDC")
-	}
-	return hdc(r), nil
-}
-
-// releaseWindowDC gives a window DC back.
-func releaseWindowDC(hwnd uintptr, h hdc) { procReleaseDC.Call(hwnd, uintptr(h)) }
+func releaseScreenDC(h hdc) { win32.ReleaseDC(0, h) }
 
 // memoryDC creates a memory device context compatible with ref.
-func memoryDC(ref hdc) (hdc, error) {
-	r, _, _ := procCreateCompatibleDC.Call(uintptr(ref))
-	if r == 0 {
-		return 0, lastError("CreateCompatibleDC")
-	}
-	return hdc(r), nil
-}
+func memoryDC(ref hdc) (hdc, error) { return win32.CreateCompatibleDC(ref) }
 
 // deleteDC destroys a memory device context.
-func deleteDC(h hdc) { procDeleteDC.Call(uintptr(h)) }
+func deleteDC(h hdc) { win32.DeleteDC(h) }
 
 // selectObject selects a GDI object into a device context and returns the
 // previous one, which must be selected back before the DC is deleted.
-func selectObject(h hdc, obj uintptr) uintptr {
-	r, _, _ := procSelectObject.Call(uintptr(h), obj)
-	return r
-}
+func selectObject(h hdc, obj win32.HANDLE) win32.HANDLE { return win32.SelectObject(h, obj) }
 
 // deleteObject destroys a GDI object.
-func deleteObject(obj uintptr) { procDeleteObject.Call(obj) }
+func deleteObject(obj win32.HANDLE) { win32.DeleteObject(obj) }
+
+// clearDC paints a device context black with PatBlt(BLACKNESS). PrintWindow
+// composites rather than overwriting, so a buffer reused between frames keeps
+// the previous frame's pixels wherever the window is transparent; clearing
+// first is what stops a captured window from smearing.
+func clearDC(h hdc, w, height int) {
+	win32.PatBlt(h, 0, 0, int32(w), int32(height), win32.Blackness)
+}
 
 // dibSection is a top-down 32bpp BGRA DIB section together with a Go slice
 // that ALIASES its pixels. Nothing is copied: bits is the address GDI itself
@@ -222,11 +184,12 @@ type dibSection struct {
 // newDIBSection creates a top-down 32bpp BI_RGB DIB section of the given size
 // and returns it with its pixels exposed as a Go slice.
 //
-// The pointer dance is the whole point. CreateDIBSection's fifth argument is a
-// `void**` it writes the pixel address into; the destination here is declared
-// as a *byte, so the OS writes a Go-visible POINTER and unsafe.Slice can build
-// the view directly. Had the address come back as a uintptr — the way it would
-// from a plain .Call return value — turning it into a slice would be exactly
+// CreateDIBSection is the one GDI call this package binds itself rather than
+// taking from win32, because of what the fifth argument is: a `void**` the OS
+// writes the pixel address into. The destination here is declared as a *byte,
+// so the OS writes a Go-visible POINTER and unsafe.Slice can build the view
+// directly. Had the address come back as a uintptr — the way it would from a
+// wrapper returning a plain integer — turning it into a slice would be exactly
 // the uintptr-to-pointer conversion go vet's unsafeptr check exists to catch,
 // and the fleet's usual answer (copy it out with RtlMoveMemory) would put a
 // full-frame memcpy on the hot path.
@@ -268,7 +231,7 @@ func (d *dibSection) layout() DIBLayout {
 // reads freed memory, so it is cleared rather than left dangling.
 func (d *dibSection) free() {
 	if d.bmp != 0 {
-		deleteObject(uintptr(d.bmp))
+		deleteObject(win32.HANDLE(d.bmp))
 		d.bmp = 0
 	}
 	d.pix = nil
@@ -276,60 +239,20 @@ func (d *dibSection) free() {
 
 // bitBlt copies a rectangle between device contexts.
 func bitBlt(dst hdc, dx, dy, w, h int, src hdc, sx, sy int, rop uint32) error {
-	r, _, _ := procBitBlt.Call(
-		uintptr(dst), uintptr(int32(dx)), uintptr(int32(dy)), uintptr(int32(w)), uintptr(int32(h)),
-		uintptr(src), uintptr(int32(sx)), uintptr(int32(sy)), uintptr(rop),
-	)
-	if !boolOf(r) {
-		return lastError("BitBlt")
-	}
-	return nil
+	return win32.BitBlt(dst, int32(dx), int32(dy), int32(w), int32(h),
+		src, int32(sx), int32(sy), rop)
 }
 
 // stretchBlt copies a rectangle between device contexts, resampling.
 func stretchBlt(dst hdc, dx, dy, dw, dh int, src hdc, sx, sy, sw, sh int, rop uint32) error {
-	r, _, _ := procStretchBlt.Call(
-		uintptr(dst), uintptr(int32(dx)), uintptr(int32(dy)), uintptr(int32(dw)), uintptr(int32(dh)),
-		uintptr(src), uintptr(int32(sx)), uintptr(int32(sy)), uintptr(int32(sw)), uintptr(int32(sh)),
-		uintptr(rop),
-	)
-	if !boolOf(r) {
-		return lastError("StretchBlt")
-	}
-	return nil
+	return win32.StretchBlt(dst, int32(dx), int32(dy), int32(dw), int32(dh),
+		src, int32(sx), int32(sy), int32(sw), int32(sh), rop)
 }
 
 // setStretchMode sets the resampling mode of a device context. HALFTONE is the
 // only one that averages rather than dropping pixels, which for a downscaled
 // desktop is the difference between readable text and noise.
-func setStretchMode(h hdc, mode int) { procSetStretchBltMode.Call(uintptr(h), uintptr(int32(mode))) }
-
-// clearDC paints a device context black with PatBlt(BLACKNESS). PrintWindow
-// composites rather than overwriting, so a buffer reused between frames keeps
-// the previous frame's pixels wherever the window is transparent; clearing
-// first is what stops a captured window from smearing.
-func clearDC(h hdc, w, height int) {
-	const blackness = 0x00000042
-	procPatBlt.Call(uintptr(h), 0, 0, uintptr(int32(w)), uintptr(int32(height)), uintptr(blackness))
-}
-
-// virtualScreen is the bounding rectangle of every monitor, in device pixels,
-// read from the SM_?VIRTUALSCREEN metrics. Its origin is normally negative
-// when a monitor sits above or to the left of the primary one.
-func virtualScreen() Rect {
-	const (
-		smXVirtualScreen  = 76
-		smYVirtualScreen  = 77
-		smCXVirtualScreen = 78
-		smCYVirtualScreen = 79
-	)
-	m := func(i int) int {
-		r, _, _ := procGetSystemMetrics.Call(uintptr(int32(i)))
-		return int(int32(r))
-	}
-	return Rect{X: m(smXVirtualScreen), Y: m(smYVirtualScreen),
-		W: m(smCXVirtualScreen), H: m(smCYVirtualScreen)}
-}
+func setStretchMode(h hdc, mode int) { win32.SetStretchBltMode(h, int32(mode)) }
 
 // printWindow renders a window into a device context through DWM, which is the
 // only way to capture a window that is occluded or hardware composited.
@@ -360,10 +283,10 @@ func drawCursor(dst hdc, originX, originY int, sx, sy float64) bool {
 		hotX, hotY = int(ii.XHotspot), int(ii.YHotspot)
 		// GetIconInfo hands over two bitmaps the caller owns.
 		if ii.HbmMask != 0 {
-			deleteObject(ii.HbmMask)
+			deleteObject(win32.HANDLE(ii.HbmMask))
 		}
 		if ii.HbmColor != 0 {
-			deleteObject(ii.HbmColor)
+			deleteObject(win32.HANDLE(ii.HbmColor))
 		}
 	}
 	x := int(float64(int(ci.PtScreenPos.X)-originX-hotX) * sx)

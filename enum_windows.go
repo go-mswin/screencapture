@@ -27,6 +27,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/go-mswin/win32"
 	"golang.org/x/sys/windows"
 )
 
@@ -103,7 +104,7 @@ func describeMonitor(hmon uintptr) (Display, bool) {
 	if !boolOf(r) {
 		return Display{}, false
 	}
-	b := mi.RcMonitor.toRect()
+	b := toRect(mi.RcMonitor)
 	dpi := monitorDPI(hmon)
 	d := Display{
 		ID:           uint64(hmon),
@@ -112,7 +113,7 @@ func describeMonitor(hmon uintptr) (Display, bool) {
 		PixelHeight:  b.H,
 		DPI:          dpi,
 		Bounds:       b,
-		Work:         mi.RcWork.toRect(),
+		Work:         toRect(mi.RcWork),
 		Primary:      mi.DwFlags&monitorinfoPrimary != 0,
 		Rotation:     RotationUnspecified,
 		AdapterIndex: -1,
@@ -156,7 +157,7 @@ func Windows(ctx context.Context) ([]Window, error) {
 	dpiOnce()
 	enumMu.Lock()
 	defer enumMu.Unlock()
-	fg, _, _ := procGetForegroundWindow.Call()
+	fg := uintptr(win32.GetForegroundWindow())
 	var found []Window
 	cb := windows.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
 		if w, ok := describeWindow(hwnd, fg); ok {
@@ -179,31 +180,26 @@ func Windows(ctx context.Context) ([]Window, error) {
 // describeWindow decides whether a window is worth listing and, if so,
 // describes it.
 func describeWindow(hwnd, foreground uintptr) (Window, bool) {
-	const (
-		gwlExStyle     = -20
-		wsExToolWindow = 0x00000080
-	)
-	if vis, _, _ := procIsWindowVisible.Call(hwnd); !boolOf(vis) {
+	if !win32.IsWindowVisible(win32.HWND(hwnd)) {
 		return Window{}, false
 	}
-	if ex := windowLongPtr(hwnd, gwlExStyle); ex&wsExToolWindow != 0 {
+	if ex := win32.GetWindowLongPtr(win32.HWND(hwnd), win32.GWLExStyle); ex&win32.WSExToolWindow != 0 {
 		return Window{}, false
 	}
-	title := windowText(hwnd)
+	title := win32.GetWindowText(win32.HWND(hwnd))
 	if title == "" {
 		return Window{}, false
 	}
 	var pid uint32
 	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-	iconic, _, _ := procIsIconic.Call(hwnd)
 	w := Window{
 		ID:        uint64(hwnd),
 		Title:     title,
-		ClassName: windowClass(hwnd),
+		ClassName: win32.GetClassName(win32.HWND(hwnd)),
 		PID:       int32(pid),
 		Bounds:    windowBounds(hwnd),
 		Active:    hwnd == foreground,
-		Minimized: boolOf(iconic),
+		Minimized: win32.IsIconic(win32.HWND(hwnd)),
 		Cloaked:   windowCloaked(hwnd),
 	}
 	w.OnScreen = !w.Minimized && !w.Cloaked && !w.Bounds.Empty()
@@ -212,42 +208,6 @@ func describeWindow(hwnd, foreground uintptr) (Window, bool) {
 		w.AppName = filepath.Base(w.ExePath)
 	}
 	return w, true
-}
-
-// windowLongPtr reads one of a window's LONG_PTR fields.
-//
-// golang.org/x/sys/windows does not wrap this one and go-mswin/win32 does not
-// yet either, so it is bound off win32's shared user32 handle rather than off a
-// second LazyDLL. GetWindowLongPtrW exists only on 64-bit Windows, which is the
-// only Windows this package targets.
-func windowLongPtr(hwnd uintptr, index int) uintptr {
-	r, _, _ := procGetWindowLongPtrW.Call(hwnd, uintptr(int32(index)))
-	return r
-}
-
-// windowText reads a window's title.
-func windowText(hwnd uintptr) string {
-	n, _, _ := procGetWindowTextLengthW.Call(hwnd)
-	if n == 0 {
-		return ""
-	}
-	buf := make([]uint16, int(n)+1)
-	got, _, _ := procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	if got == 0 {
-		return ""
-	}
-	return utf16ToString(buf[:got])
-}
-
-// windowClass reads a window's class name. 256 characters is the documented
-// maximum a class name can be.
-func windowClass(hwnd uintptr) string {
-	var buf [256]uint16
-	got, _, _ := procGetClassNameW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	if got == 0 {
-		return ""
-	}
-	return utf16ToString(buf[:got])
 }
 
 // windowBounds returns what the user actually sees. GetWindowRect includes the
@@ -260,15 +220,15 @@ func windowBounds(hwnd uintptr) Rect {
 	if procDwmGetWindowAttribute.Find() == nil {
 		res, _, _ := procDwmGetWindowAttribute.Call(hwnd, uintptr(dwmwaExtendedFrameBounds),
 			uintptr(unsafe.Pointer(&r)), unsafe.Sizeof(r))
-		if !HRESULT(res).Failed() && r.width() > 0 && r.height() > 0 {
-			return r.toRect()
+		if !HRESULT(res).Failed() && r.Width() > 0 && r.Height() > 0 {
+			return toRect(r)
 		}
 	}
-	res, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
-	if !boolOf(res) {
+	wr, err := win32.GetWindowRect(win32.HWND(hwnd))
+	if err != nil {
 		return Rect{}
 	}
-	return r.toRect()
+	return toRect(wr)
 }
 
 // windowCloaked reports whether DWM is hiding the window: a suspended
@@ -372,11 +332,10 @@ func lookupDisplay(ctx context.Context, d Display) (Display, error) {
 // pixels.
 func liveWindow(w Window) (Window, error) {
 	hwnd := uintptr(w.ID)
-	if ok, _, _ := procIsWindow.Call(hwnd); !boolOf(ok) {
+	if !win32.IsWindow(win32.HWND(hwnd)) {
 		return Window{}, fmt.Errorf("%w: window %#x no longer exists", ErrNotFound, w.ID)
 	}
-	fg, _, _ := procGetForegroundWindow.Call()
-	cur, ok := describeWindow(hwnd, fg)
+	cur, ok := describeWindow(hwnd, uintptr(win32.GetForegroundWindow()))
 	if !ok {
 		// The window exists but no longer passes the listing filter (it was
 		// hidden, or lost its title). It can still be captured, so only the

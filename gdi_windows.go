@@ -32,6 +32,8 @@ package screencapture
 import (
 	"fmt"
 	"time"
+
+	"github.com/go-mswin/win32"
 )
 
 // gdiSource is what a GDI capture reads from.
@@ -67,7 +69,7 @@ type gdiCapture struct {
 type gdiSlot struct {
 	dc   hdc
 	dib  *dibSection
-	prev uintptr
+	prev win32.HANDLE
 }
 
 // newGDIDisplayCapture prepares a GDI capture of one display's rectangle.
@@ -133,7 +135,7 @@ func (c *gdiCapture) init(slots int) (*gdiCapture, error) {
 			c.Close()
 			return nil, err
 		}
-		prev := selectObject(dc, uintptr(dib.bmp))
+		prev := selectObject(dc, win32.HANDLE(dib.bmp))
 		// HALFTONE averages instead of dropping pixels. On a downscaled
 		// desktop it is the difference between readable text and noise, and it
 		// is per-device-context state, so it is set once here rather than per
@@ -235,7 +237,7 @@ func (c *gdiCapture) captureWindow(s gdiSlot) error {
 		return err
 	}
 	defer scratch.free()
-	prev := selectObject(scratchDC, uintptr(scratch.bmp))
+	prev := selectObject(scratchDC, win32.HANDLE(scratch.bmp))
 	defer selectObject(scratchDC, prev)
 	clearDC(scratchDC, c.src.srcW, c.src.srcH)
 	if err := printWindow(c.src.hwnd, scratchDC, pwRenderFullContent); err != nil {

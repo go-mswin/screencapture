@@ -81,10 +81,10 @@ func TestRectHelpers(t *testing.T) {
 	// A monitor above and to the left of the primary one: negative origin,
 	// positive size.
 	r := rect{Left: -1920, Top: -1080, Right: 0, Bottom: 0}
-	if r.width() != 1920 || r.height() != 1080 {
-		t.Fatalf("width/height = %d/%d", r.width(), r.height())
+	if r.Width() != 1920 || r.Height() != 1080 {
+		t.Fatalf("width/height = %d/%d", r.Width(), r.Height())
 	}
-	if got := r.toRect(); got != (Rect{X: -1920, Y: -1080, W: 1920, H: 1080}) {
+	if got := toRect(r); got != (Rect{X: -1920, Y: -1080, W: 1920, H: 1080}) {
 		t.Fatalf("toRect = %s", got)
 	}
 }

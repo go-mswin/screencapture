@@ -112,12 +112,23 @@ genuinely differs:
 
 ## Reuse
 
-Built on [`go-mswin/win32`](https://github.com/go-mswin/win32), the fleet's
-owned CGO-free Win32 foundation: its shared `User32`/`Gdi32`/`Kernel32` lazy DLL
-handles, its `BitmapInfoHeader`, its `PackBGRA`. The capture-specific
-procedures, and the dxgi/d3d11/shcore/dwmapi libraries win32 does not carry, are
-bound here off those same handles rather than behind a second set of
-`NewLazySystemDLL` calls.
+Built on [`go-mswin/win32`](https://github.com/go-mswin/win32) v0.2.0, the
+fleet's owned CGO-free Win32 foundation. Everything it owns comes from there
+rather than being restated here: the `HDC`/`HBITMAP`/`RECT`/`POINT`/
+`BITMAPINFOHEADER`/`ICONINFO` types, the device-context and GDI-object calls
+(`GetDC`, `CreateCompatibleDC`, `SelectObject`, `BitBlt`, `StretchBlt`,
+`PatBlt`, …), the window queries (`GetWindowText`, `GetClassName`,
+`GetWindowLongPtr`, `IsIconic`, …), and the constants that are silent when
+wrong (`CAPTUREBLT`, `HALFTONE`, `WS_EX_*`, `HWND_TOPMOST`). The
+device-context and window-query surface was **added to win32 for this package**
+rather than copied into it — `win32` shipped `StretchDIBitsBGRA`, which takes
+an `HDC`, and no way to obtain one.
+
+What stays here is what is genuinely capture-specific: `CreateDIBSection` (bound
+locally because the pointer-out-parameter trick below is the whole point of it),
+the duplication and DWM calls, and the dxgi/d3d11/shcore/dwmapi libraries win32
+does not carry — all bound off win32's own shared DLL handles rather than behind
+a second set of `NewLazySystemDLL` calls.
 
 ### Why there is no `RtlMoveMemory` on the hot path
 

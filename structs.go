@@ -3,7 +3,11 @@
 
 package screencapture
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/go-mswin/win32"
+)
 
 // The Win32, DXGI and Direct3D 11 structures this package passes across the
 // syscall boundary, mirrored in Go.
@@ -20,19 +24,18 @@ import "unsafe"
 // x86-64 and arm64. Both have 8-byte pointers and the same alignment rules, so
 // one set of expected sizes covers both.
 
-// point mirrors POINT.
-type point struct{ X, Y int32 }
+// point and rect are go-mswin/win32's POINT and RECT. They are ALIASES, not
+// redeclarations: a second copy of a structure the OS writes into is a second
+// place for its layout to drift.
+type (
+	point = win32.Point
+	rect  = win32.Rect
+)
 
-// rect mirrors RECT (left, top, right, bottom).
-type rect struct{ Left, Top, Right, Bottom int32 }
-
-// width and height convert a RECT to a size.
-func (r rect) width() int  { return int(r.Right - r.Left) }
-func (r rect) height() int { return int(r.Bottom - r.Top) }
-
-// toRect converts to the exported origin-plus-size form.
-func (r rect) toRect() Rect {
-	return Rect{X: int(r.Left), Y: int(r.Top), W: r.width(), H: r.height()}
+// toRect converts a Win32 RECT (left, top, right, bottom) to the exported
+// origin-plus-size form.
+func toRect(r rect) Rect {
+	return Rect{X: int(r.Left), Y: int(r.Top), W: int(r.Width()), H: int(r.Height())}
 }
 
 // monitorInfoEx mirrors MONITORINFOEXW. CbSize must be set to the struct's own
@@ -105,13 +108,14 @@ func (bi bitmapInfo) layout() DIBLayout {
 	}
 }
 
-// GDI constants.
+// GDI constants. The ones go-mswin/win32 owns are ALIASED rather than
+// restated, so there is one place for each value to be wrong in.
 const (
-	biRGB        = 0          // BI_RGB, uncompressed
-	dibRGBColors = 0          // DIB_RGB_COLORS
-	srcCopy      = 0x00CC0020 // SRCCOPY
-	captureBLT   = 0x40000000 // CAPTUREBLT, includes layered windows
-	halftone     = 4          // HALFTONE stretch mode
+	biRGB        = win32.BIRGB
+	dibRGBColors = win32.DIBRGBColors
+	srcCopy      = win32.SRCCOPY
+	captureBLT   = win32.CaptureBLT
+	halftone     = win32.Halftone
 	// pwRenderFullContent is PW_RENDERFULLCONTENT, which makes PrintWindow go
 	// through DWM and so capture a window that is occluded or hardware
 	// composited. Without it a modern window prints blank.
@@ -150,16 +154,10 @@ type cursorInfo struct {
 	PtScreenPos point
 }
 
-// iconInfo mirrors ICONINFO, used to recover a cursor's hotspot so the pointer
-// is drawn where it actually points rather than with its top-left corner at
-// the hotspot.
-type iconInfo struct {
-	FIcon    int32
-	XHotspot uint32
-	YHotspot uint32
-	HbmMask  uintptr
-	HbmColor uintptr
-}
+// iconInfo is go-mswin/win32's ICONINFO, used to recover a cursor's hotspot so
+// the pointer is drawn where it actually points rather than with its top-left
+// corner at the hotspot.
+type iconInfo = win32.IconInfo
 
 // guid mirrors GUID, passed by pointer to QueryInterface and
 // CreateDXGIFactory1. An interface identity that is one byte wrong resolves to
