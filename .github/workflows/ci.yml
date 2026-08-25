@@ -58,8 +58,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: amd64, runner: windows-latest }
-          - { arch: arm64, runner: windows-11-arm }
+          # The race detector does not exist on windows/arm64 — the toolchain
+          # refuses outright with "-race is not supported on windows/arm64".
+          # The lane says so rather than silently dropping the step, because a
+          # missing race lane is exactly the sort of gap nobody notices.
+          - { arch: amd64, runner: windows-latest, race: true }
+          - { arch: arm64, runner: windows-11-arm, race: false }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -91,6 +95,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
       - name: Race (CGO=1)
+        if: matrix.race
         run: go test -race -count=1 ./...
         shell: bash
       # A runner has no desktop, so this reports what it CAN see rather than
@@ -98,7 +103,7 @@ jobs:
       # display list" is real evidence the Win32 glue resolves and works: the
       # DLLs load, the procedures resolve, EnumDisplayMonitors answers.
       - name: Enumerate whatever this runner has
-        run: go run ./cmd/wsccheck -list
+        run: go run ./cmd/wsccheck -list 2>&1 | tee runner-enumeration.txt
         shell: bash
         env:
           CGO_ENABLED: "0"
