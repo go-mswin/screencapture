@@ -24,17 +24,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"sync"
 	"unsafe"
 
 	"github.com/go-mswin/win32"
 	"golang.org/x/sys/windows"
 )
-
-// enumMu serialises the monitor and window enumerations. Both hand a callback
-// to the OS which appends to a slice, and the callback is a process-wide
-// trampoline, so two concurrent enumerations would interleave into one slice.
-var enumMu sync.Mutex
 
 // Displays lists the capturable displays. It is a snapshot: monitors are
 // attached and detached and get new HMONITOR values when they are, so re-read
@@ -79,42 +73,46 @@ func Displays(ctx context.Context) ([]Display, error) {
 	return out, nil
 }
 
-// enumMonitors walks EnumDisplayMonitors and describes each monitor.
+// enumMonitors walks the monitors and describes each one.
+//
+// The walk itself is go-mswin/win32's, and the reason is not tidiness. This
+// package used to build a windows.NewCallback here, INSIDE the function, so
+// every Displays() allocated a trampoline out of a pool the runtime caps at
+// 2000 for the whole process — after which runtime.throw kills it outright.
+// win32 keeps ONE trampoline per enumeration, and the serialisation the
+// process-wide trampoline requires, so neither is this package's problem any
+// more.
 func enumMonitors() ([]Display, error) {
-	enumMu.Lock()
-	defer enumMu.Unlock()
 	var found []Display
-	cb := windows.NewCallback(func(hmon uintptr, _ uintptr, _ uintptr, _ uintptr) uintptr {
-		if d, ok := describeMonitor(hmon); ok {
+	err := win32.EnumDisplayMonitors(func(mon win32.HMONITOR, _ win32.HDC, _ win32.Rect) bool {
+		if d, ok := describeMonitor(mon); ok {
 			found = append(found, d)
 		}
-		return 1 // keep enumerating
+		return true // keep enumerating
 	})
-	r, _, _ := procEnumDisplayMonitors.Call(0, 0, cb, 0)
-	if !boolOf(r) {
-		return nil, lastError("EnumDisplayMonitors")
+	if err != nil {
+		return nil, fmt.Errorf("screencapture: %w", err)
 	}
 	return found, nil
 }
 
 // describeMonitor fills in everything GDI and the shell know about a monitor.
-func describeMonitor(hmon uintptr) (Display, bool) {
-	mi := monitorInfoEx{CbSize: uint32(unsafe.Sizeof(monitorInfoEx{}))}
-	r, _, _ := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&mi)))
-	if !boolOf(r) {
+func describeMonitor(mon win32.HMONITOR) (Display, bool) {
+	mi, err := win32.GetMonitorInfo(mon)
+	if err != nil {
 		return Display{}, false
 	}
 	b := toRect(mi.RcMonitor)
-	dpi := monitorDPI(hmon)
+	dpi := monitorDPI(mon)
 	d := Display{
-		ID:           uint64(hmon),
-		DeviceName:   utf16ToString(mi.SzDevice[:]),
+		ID:           uint64(mon),
+		DeviceName:   mi.Device(),
 		PixelWidth:   b.W,
 		PixelHeight:  b.H,
 		DPI:          dpi,
 		Bounds:       b,
 		Work:         toRect(mi.RcWork),
-		Primary:      mi.DwFlags&monitorinfoPrimary != 0,
+		Primary:      mi.Primary(),
 		Rotation:     RotationUnspecified,
 		AdapterIndex: -1,
 		OutputIndex:  -1,
@@ -129,16 +127,12 @@ func describeMonitor(hmon uintptr) (Display, bool) {
 }
 
 // monitorDPI reads a monitor's effective DPI, falling back to 96 (no scaling)
-// when shcore.dll is missing, which is the case before Windows 8.1.
-func monitorDPI(hmon uintptr) int {
-	if procGetDpiForMonitor.Find() != nil {
-		return 96
-	}
-	var x, y uint32
-	r, _, _ := procGetDpiForMonitor.Call(hmon, uintptr(mdtEffectiveDPI),
-		uintptr(unsafe.Pointer(&x)), uintptr(unsafe.Pointer(&y)))
-	if HRESULT(r).Failed() || x == 0 {
-		return 96
+// when shcore.dll is missing, which is the case before Windows 8.1, or when
+// the monitor no longer answers.
+func monitorDPI(mon win32.HMONITOR) int {
+	x, _, err := win32.GetDpiForMonitor(mon, win32.MDTEffectiveDPI)
+	if err != nil {
+		return win32.DefaultDPI
 	}
 	return int(x)
 }
@@ -155,51 +149,46 @@ func Windows(ctx context.Context) ([]Window, error) {
 		return nil, err
 	}
 	dpiOnce()
-	enumMu.Lock()
-	defer enumMu.Unlock()
-	fg := uintptr(win32.GetForegroundWindow())
+	fg := win32.GetForegroundWindow()
 	var found []Window
-	cb := windows.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+	// As with the monitors: the walk and its single process-wide trampoline
+	// are go-mswin/win32's. win32.EnumWindows already distinguishes a callback
+	// that stopped the walk from a genuine failure, and this callback never
+	// stops it — so an error here is real, and an empty result with no error
+	// is a session that genuinely has nothing to show.
+	if err := win32.EnumWindows(func(hwnd win32.HWND) bool {
 		if w, ok := describeWindow(hwnd, fg); ok {
 			found = append(found, w)
 		}
-		return 1
-	})
-	r, _, _ := procEnumWindows.Call(cb, 0)
-	// EnumWindows returns FALSE both when the callback stopped it and when it
-	// genuinely failed. This callback never stops it, so a false here is real
-	// — except that it also returns false with no error set on some builds
-	// when the last callback returned normally, which is why an empty error is
-	// only reported when nothing at all was found.
-	if !boolOf(r) && len(found) == 0 {
-		return nil, lastError("EnumWindows")
+		return true
+	}); err != nil && len(found) == 0 {
+		return nil, fmt.Errorf("screencapture: %w", err)
 	}
 	return found, nil
 }
 
 // describeWindow decides whether a window is worth listing and, if so,
 // describes it.
-func describeWindow(hwnd, foreground uintptr) (Window, bool) {
-	if !win32.IsWindowVisible(win32.HWND(hwnd)) {
+func describeWindow(hwnd, foreground win32.HWND) (Window, bool) {
+	if !win32.IsWindowVisible(hwnd) {
 		return Window{}, false
 	}
-	if ex := win32.GetWindowLongPtr(win32.HWND(hwnd), win32.GWLExStyle); ex&win32.WSExToolWindow != 0 {
+	if ex := win32.GetWindowLongPtr(hwnd, win32.GWLExStyle); ex&win32.WSExToolWindow != 0 {
 		return Window{}, false
 	}
-	title := win32.GetWindowText(win32.HWND(hwnd))
+	title := win32.GetWindowText(hwnd)
 	if title == "" {
 		return Window{}, false
 	}
-	var pid uint32
-	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	pid, _ := win32.GetWindowThreadProcessID(hwnd)
 	w := Window{
 		ID:        uint64(hwnd),
 		Title:     title,
-		ClassName: win32.GetClassName(win32.HWND(hwnd)),
+		ClassName: win32.GetClassName(hwnd),
 		PID:       int32(pid),
 		Bounds:    windowBounds(hwnd),
 		Active:    hwnd == foreground,
-		Minimized: win32.IsIconic(win32.HWND(hwnd)),
+		Minimized: win32.IsIconic(hwnd),
 		Cloaked:   windowCloaked(hwnd),
 	}
 	w.OnScreen = !w.Minimized && !w.Cloaked && !w.Bounds.Empty()
@@ -215,16 +204,16 @@ func describeWindow(hwnd, foreground uintptr) (Window, bool) {
 // on a default theme — so capturing that rectangle gives a window with a
 // transparent margin. DWMWA_EXTENDED_FRAME_BOUNDS is the corrected rectangle;
 // GetWindowRect is only the fallback for a system without DWM.
-func windowBounds(hwnd uintptr) Rect {
+func windowBounds(hwnd win32.HWND) Rect {
 	var r rect
 	if procDwmGetWindowAttribute.Find() == nil {
-		res, _, _ := procDwmGetWindowAttribute.Call(hwnd, uintptr(dwmwaExtendedFrameBounds),
+		res, _, _ := procDwmGetWindowAttribute.Call(uintptr(hwnd), uintptr(dwmwaExtendedFrameBounds),
 			uintptr(unsafe.Pointer(&r)), unsafe.Sizeof(r))
 		if !HRESULT(res).Failed() && r.Width() > 0 && r.Height() > 0 {
 			return toRect(r)
 		}
 	}
-	wr, err := win32.GetWindowRect(win32.HWND(hwnd))
+	wr, err := win32.GetWindowRect(hwnd)
 	if err != nil {
 		return Rect{}
 	}
@@ -235,12 +224,12 @@ func windowBounds(hwnd uintptr) Rect {
 // Universal Windows Platform app, or a window belonging to another virtual
 // desktop. Such a window is visible to EnumWindows and captures blank, so
 // saying so is worth the extra call.
-func windowCloaked(hwnd uintptr) bool {
+func windowCloaked(hwnd win32.HWND) bool {
 	if procDwmGetWindowAttribute.Find() != nil {
 		return false
 	}
 	var cloaked uint32
-	res, _, _ := procDwmGetWindowAttribute.Call(hwnd, uintptr(dwmwaCloaked),
+	res, _, _ := procDwmGetWindowAttribute.Call(uintptr(hwnd), uintptr(dwmwaCloaked),
 		uintptr(unsafe.Pointer(&cloaked)), unsafe.Sizeof(cloaked))
 	return !HRESULT(res).Failed() && cloaked != 0
 }
@@ -331,11 +320,11 @@ func lookupDisplay(ctx context.Context, d Display) (Display, error) {
 // liveWindow re-reads a window and checks it still exists and still has
 // pixels.
 func liveWindow(w Window) (Window, error) {
-	hwnd := uintptr(w.ID)
-	if !win32.IsWindow(win32.HWND(hwnd)) {
+	hwnd := win32.HWND(w.ID)
+	if !win32.IsWindow(hwnd) {
 		return Window{}, fmt.Errorf("%w: window %#x no longer exists", ErrNotFound, w.ID)
 	}
-	cur, ok := describeWindow(hwnd, uintptr(win32.GetForegroundWindow()))
+	cur, ok := describeWindow(hwnd, win32.GetForegroundWindow())
 	if !ok {
 		// The window exists but no longer passes the listing filter (it was
 		// hidden, or lost its title). It can still be captured, so only the

@@ -189,7 +189,12 @@ func (c *gdiCapture) Capture(i int, _ time.Duration) ([]byte, DIBLayout, time.Du
 		// origin, which is read fresh because the window may have moved.
 		ox, oy := c.src.srcX, c.src.srcY
 		if c.src.hwnd != 0 {
-			b := windowBounds(c.src.hwnd)
+			// gdiSource keeps a raw uintptr because the capture-specific
+			// procedures it feeds (printWindow, the display-affinity pair)
+			// are bound here and take one. windowBounds is win32's typed
+			// world, so the conversion happens at the seam rather than the
+			// whole hot path being retyped.
+			b := windowBounds(win32.HWND(c.src.hwnd))
 			ox, oy = b.X, b.Y
 		}
 		drawCursor(s.dc, ox, oy,
