@@ -10,29 +10,71 @@ ssh session on Windows is session 0 and has no desktop (see "session 0" below).
 Everything cross-compiled on the Mac: CGO_ENABLED=0 GOOS=windows GOARCH=arm64.
 
 
+0. HOW TO CHECK SECTIONS 1 AND 2 YOURSELF
+-----------------------------------------
+The three desktop PNGs in this directory are a MATCHED SET: one capture through
+each backend and one QEMU screendump, all of the same motionless desktop within
+the same ten seconds. Every claim in sections 1 and 2 is a comparison between
+two of them, and `cmd/pngdiff` runs it:
+
+    go run ./cmd/pngdiff testdata/artifacts/display-gdi.png \
+                         testdata/artifacts/qemu-screendump-control.png
+    go run ./cmd/pngdiff testdata/artifacts/display-duplication.png \
+                         testdata/artifacts/qemu-screendump-control.png
+    go run ./cmd/pngdiff testdata/artifacts/display-gdi.png \
+                         testdata/artifacts/display-duplication.png
+
+All three print `0 of 480000 pixels differ` and exit 0.
+TestCommittedArtifactsStillAgree in cmd/pngdiff runs the same three in CI, so
+the record cannot drift away from the files.
+
+The fourth PNG, window-printwindow.png, is NOT part of that set: it is a
+626x473 capture of one window, taken during a different run, and there is
+nothing to compare it against — it illustrates section 4 rather than proving
+it. Comparing it to the desktop files is a size mismatch and pngdiff says so.
+
+An earlier version of this file quoted a 0-of-480000 result for a pair of which
+only ONE file was committed, and committed a duplication PNG from a DIFFERENT
+moment. Anyone who compared those two got about 48000 differing pixels — two
+moments of the same screen, not two instruments disagreeing — and had no way to
+tell. The set below was retaken together to remove that trap.
+
+
 1. CONTROL FIRST — an instrument that is not this package
 --------------------------------------------------------
 QEMU's own `screendump` over the monitor socket reads the ramfb framebuffer
-directly, without going through Windows at all. A GDI display capture taken at
-the same moment was compared to it PIXEL BY PIXEL:
+directly, without going through Windows at all. It is committed here as
+qemu-screendump-control.png.
 
-    pixels differing between the GDI capture and the QEMU screendump: 0 of 480000
+    display-gdi.png          vs qemu-screendump-control.png : 0 of 480000 differ
+    display-duplication.png  vs qemu-screendump-control.png : 0 of 480000 differ
 
-Zero. An independent instrument agrees with this package exactly. That also
-settles channel order (blue renders blue, not red) and orientation (the title
-text is the right way up, so the DIB is top-down) without a second experiment.
+Zero, both ways. An independent instrument agrees with this package exactly.
+That also settles channel order (blue renders blue, not red) and orientation
+(the text is the right way up, so the DIB is top-down) without a second
+experiment.
+
+The launcher's console window was HIDDEN for this run (schtasks -> wscript
+WScript.Shell.Run with window style 0), so the desktop carried nothing that
+could repaint between the captures and the screendump. That is why the
+screendump could be taken ten seconds after the captures and still match to the
+pixel.
 
 
 2. THE TWO BACKENDS AGREE WITH EACH OTHER
 -----------------------------------------
 The same still desktop captured through DXGI Desktop Duplication and through
-GDI BitBlt, each written out as a PNG:
+GDI BitBlt, each written out as a PNG by the live suite, seconds apart:
 
-    b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8  display-duplication.png
-    b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8  display-gdi.png
+    ab015a4c664574cbb96c85a109db989c9005ae132ea974d8fc6a496920006e77  display-duplication.png
+    ab015a4c664574cbb96c85a109db989c9005ae132ea974d8fc6a496920006e77  display-gdi.png
 
-Byte-identical. Only the duplication one is committed; the GDI file is
-reproducible and had the same hash.
+Byte-identical FILES, not merely equal images. Both are committed.
+
+(A run on 2026-08-25 before the go-mswin/win32 v0.2.0 migration produced the
+same equality at sha256 b1c1d52d9905a6aa...; that pair is not committed, and
+its hash appears in this repository's history only. The committed set is the
+one above.)
 
 
 3. THE LIVE SUITE — 7 of 7 PASS
@@ -119,12 +161,27 @@ runs above go through `schtasks /it`.
 
 ARTEFACTS
 ---------
-  display-duplication.png     the desktop, captured through IDXGIOutputDuplication
-  window-printwindow.png      a fully occluded animated window, captured through
-                              PrintWindow(PW_RENDERFULLCONTENT) — the purple
-                              gradient and the white sweeping block are drawn by
-                              wsccheck's own animator
-  qemu-screendump-control.png QEMU's independent screendump used as the control
+The first three are a MATCHED SET — same desktop, same ten seconds, all three
+agree at 0 of 480000 pixels. See section 0 for the commands.
+
+  display-gdi.png             the desktop, captured through BitBlt into a DIB
+                              section
+  display-duplication.png     the same desktop, captured through
+                              IDXGIOutputDuplication; byte-identical to the
+                              file above
+  qemu-screendump-control.png the same desktop, read out of the ramfb
+                              framebuffer by QEMU itself — the control, produced
+                              by an instrument that is not this package
+
+Not part of that set:
+
+  window-printwindow.png      a fully occluded animated window (626x473),
+                              captured through PrintWindow(PW_RENDERFULLCONTENT)
+                              during a different run — the purple gradient and
+                              the white sweeping block are drawn by wsccheck's
+                              own animator. There is no control for it and
+                              nothing to compare it against; it illustrates
+                              section 4 rather than proving it.
 
 
 ADDENDUM 1 — a second machine: GitHub's windows-latest runner
@@ -159,8 +216,11 @@ repeated afterwards and compared on the OUTPUT, not on the exit status:
   live suite            7 of 7 PASS, again
   GDI vs duplication    still byte-identical, and still
                         sha256 b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8
-                        -- the SAME hash as the artefact committed before the
-                        migration, so the pixels did not move
+                        -- the same hash the pre-migration run produced, so
+                        deleting twenty syscall wrappers moved no pixels. That
+                        pair is NOT the committed one: see section 0. The
+                        committed set was retaken later the same day, on the
+                        migrated code, and is at ab015a4c664574cb...
   occluded window       118 of 120 frames differed
   read-back             GDI 11.7 ms, duplication 2.84 ms (both faster than the
                         pre-migration samples, which is scheduling noise on an
