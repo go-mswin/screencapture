@@ -125,3 +125,43 @@ ARTEFACTS
                               gradient and the white sweeping block are drawn by
                               wsccheck's own animator
   qemu-screendump-control.png QEMU's independent screendump used as the control
+
+
+ADDENDUM 1 — a second machine: GitHub's windows-latest runner
+-------------------------------------------------------------
+The CI lane runs `wsccheck -list` on a GitHub-hosted Windows Server 2025
+runner, which has NO interactive desktop session. It reports:
+
+    Available=true Authorized=true
+    display 0x10001 \\.\DISPLAY1 1024x768 px (1024x768 dip @ 96 dpi)
+            at (0,0)+(1024x768) primary=true rot=0deg dxgi=0/0 duplicable=true
+    window 0x201e8 "C:\ProgramData\GitHub\HostedComputeAgent\hosted-compute-agent"
+            [WindowsTerminal.exe/CASCADIA_HOSTING_WINDOW_CLASS]
+            at (25,26)+(1030x628) onscreen=true cloaked=false
+    checks: 2 passed, 0 failed
+
+A second, entirely different Windows machine on which the DLLs load, the
+procedures resolve, EnumDisplayMonitors answers, the DXGI adapter walk matches
+`\\.\DISPLAY1` to adapter 0 output 0, and EnumWindows returns a real window
+with its class and executable. No CAPTURE is asserted there: a runner's session
+is not one a capture means anything in, and pretending otherwise is exactly the
+session-0 trap described above.
+
+
+ADDENDUM 2 — re-verified after the go-mswin/win32 v0.2.0 migration
+------------------------------------------------------------------
+Twenty procedures and five types were deleted from this package and taken from
+go-mswin/win32 instead (screencapture#2, win32#1). That is a change that CANNOT
+be trusted to a green build: every one of those calls is a syscall whose
+failure mode is a wrong-looking picture, not a compile error. So the VM run was
+repeated afterwards and compared on the OUTPUT, not on the exit status:
+
+  live suite            7 of 7 PASS, again
+  GDI vs duplication    still byte-identical, and still
+                        sha256 b1c1d52d9905a6aa8ed19b75800cc2c6584786f8958cbb7e657b40e9a50174e8
+                        -- the SAME hash as the artefact committed before the
+                        migration, so the pixels did not move
+  occluded window       118 of 120 frames differed
+  read-back             GDI 11.7 ms, duplication 2.84 ms (both faster than the
+                        pre-migration samples, which is scheduling noise on an
+                        emulated framebuffer, not an improvement to claim)
