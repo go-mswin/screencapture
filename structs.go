@@ -38,19 +38,10 @@ func toRect(r rect) Rect {
 	return Rect{X: int(r.Left), Y: int(r.Top), W: int(r.Width()), H: int(r.Height())}
 }
 
-// monitorInfoEx mirrors MONITORINFOEXW. CbSize must be set to the struct's own
-// size before GetMonitorInfoW is called, which is how the OS tells the EX form
-// from the plain one.
-type monitorInfoEx struct {
-	CbSize    uint32
-	RcMonitor rect
-	RcWork    rect
-	DwFlags   uint32
-	SzDevice  [32]uint16
-}
-
-// monitorinfoPrimary is MONITORINFOF_PRIMARY.
-const monitorinfoPrimary = 0x00000001
+// MONITORINFOEXW used to be declared here, with its cbSize and its
+// MONITORINFOF_PRIMARY flag. It is go-mswin/win32's now — win32.MonitorInfoEx
+// — which is where its size is asserted too. A structure the OS writes into
+// should have exactly one Go declaration, and this one had two.
 
 // bitmapInfoHeader mirrors BITMAPINFOHEADER. A NEGATIVE BiHeight requests a
 // top-down DIB, which is the only thing this package ever asks for.
@@ -136,14 +127,10 @@ const (
 	// the user actually sees, without the invisible DWM resize border that
 	// GetWindowRect includes.
 	dwmwaExtendedFrameBounds = 9
-	// mdtEffectiveDPI is MDT_EFFECTIVE_DPI for GetDpiForMonitor.
-	mdtEffectiveDPI = 0
-	// dpiAwarenessContextPerMonitorAwareV2 is
-	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, the handle value (-4) that
-	// SetProcessDpiAwarenessContext takes. Without it every monitor
-	// measurement comes back in virtualised coordinates and a capture of a
-	// scaled display is silently the wrong size.
-	dpiAwarenessContextPerMonitorAwareV2 = ^uintptr(3) // -4
+	// MDT_EFFECTIVE_DPI and DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 were
+	// here. They are win32.MDTEffectiveDPI and win32.DPIAwarenessPerMonitorV2
+	// now: a negative handle constant written as a bit expression is exactly
+	// the kind of value that is wrong without failing, and it had two homes.
 )
 
 // cursorInfo mirrors CURSORINFO. CbSize must be set before GetCursorInfo.

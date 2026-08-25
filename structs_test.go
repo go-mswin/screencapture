@@ -6,6 +6,8 @@ package screencapture
 import (
 	"testing"
 	"unsafe"
+
+	"github.com/go-mswin/win32"
 )
 
 // The C layout of every structure that crosses the syscall boundary.
@@ -27,7 +29,6 @@ func TestStructSizes(t *testing.T) {
 	}{
 		{"POINT", unsafe.Sizeof(point{}), 8},
 		{"RECT", unsafe.Sizeof(rect{}), 16},
-		{"MONITORINFOEXW", unsafe.Sizeof(monitorInfoEx{}), 104},
 		{"BITMAPINFOHEADER", unsafe.Sizeof(bitmapInfoHeader{}), 40},
 		{"BITMAPINFO", unsafe.Sizeof(bitmapInfo{}), 52},
 		{"CURSORINFO", unsafe.Sizeof(cursorInfo{}), 24},
@@ -59,7 +60,12 @@ func TestStructOffsets(t *testing.T) {
 		got  uintptr
 		want uintptr
 	}{
-		{"MONITORINFOEXW.szDevice", unsafe.Offsetof(monitorInfoEx{}.SzDevice), 40},
+		// The layout is win32's to declare now, and win32 asserts it too. It
+		// is asserted HERE as well because this package DEPENDS on it: an
+		// upstream field added in the wrong place would move szDevice, every
+		// display would come back with a mangled device name, and nothing in
+		// this repository would say why.
+		{"MONITORINFOEXW.szDevice", unsafe.Offsetof(win32.MonitorInfoEx{}.SzDevice), 40},
 		{"DXGI_OUTPUT_DESC.Monitor", unsafe.Offsetof(dxgiOutputDesc{}.Monitor), 88},
 		{"DXGI_OUTDUPL_DESC.DesktopImageInSystemMemory",
 			unsafe.Offsetof(dxgiOutduplDesc{}.DesktopImageInSystemMemory), 32},
@@ -157,9 +163,13 @@ func TestFeatureLevelsAreNewestFirst(t *testing.T) {
 func TestDPIAwarenessContextValue(t *testing.T) {
 	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the HANDLE value -4. It is
 	// written as a bit expression so it is right on both 64-bit targets, and
-	// asserted here because a wrong value silently leaves the process
-	// DPI-unaware and every capture of a scaled display the wrong size.
-	if got := dpiAwarenessContextPerMonitorAwareV2; got != ^uintptr(0)-3 {
+	// asserted because a wrong value silently leaves the process DPI-unaware
+	// and every capture of a scaled display the wrong size.
+	//
+	// The constant is win32's now. It stays asserted here because THIS package
+	// is the one whose captures come back wrong if it drifts, and a dependency
+	// one may not check is a dependency one may not rely on.
+	if got := win32.DPIAwarenessPerMonitorV2; got != ^uintptr(0)-3 {
 		t.Fatalf("DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = %#x, want -4", got)
 	}
 }

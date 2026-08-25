@@ -30,7 +30,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/go-mswin/win32"
 )
@@ -272,18 +271,11 @@ func TestLiveCloseIsIdempotent(t *testing.T) {
 	}
 }
 
-// writeArtifact saves a frame under testdata/artifacts so a run leaves
-// something a human can look at.
+// writeArtifact saves a frame under [captureDir] so a run leaves something a
+// human can look at — somewhere it cannot be committed.
 func writeArtifact(t *testing.T, name string, f Frame) {
 	t.Helper()
-	dir := os.Getenv("SCREENCAPTURE_ARTIFACTS")
-	if dir == "" {
-		dir = filepath.Join("testdata", "artifacts")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("artifacts: %v", err)
-		return
-	}
+	dir := captureDir(t)
 	img, err := f.NRGBAOpaque()
 	if err != nil {
 		t.Logf("artifacts: %v", err)
@@ -439,24 +431,25 @@ func BenchmarkScreenReadback(b *testing.B) {
 	b.Logf("display %dx%d", d.PixelWidth, d.PixelHeight)
 }
 
-// TestLiveStructSizesAgainstTheOS is the one check the portable size assertions
-// cannot make: that the OS itself accepts the structures. GetMonitorInfoW
-// REJECTS a MONITORINFOEXW whose cbSize is not exactly right, so a successful
-// call is direct evidence the Go layout matches the C one.
+// TestLiveStructSizesAgainstTheOS is the one check the portable size
+// assertions cannot make: that the OS itself accepts the structures.
+// GetMonitorInfoW REJECTS a MONITORINFOEXW whose cbSize is not exactly right,
+// so a successful call is direct evidence the Go layout matches the C one.
+//
+// The structure is go-mswin/win32's now, which does not make this test
+// redundant — it makes it the check that the SHARED declaration is right on
+// this machine, asked through the path this package actually uses.
 func TestLiveStructSizesAgainstTheOS(t *testing.T) {
 	requireLive(t)
-	mi := monitorInfoEx{CbSize: uint32(unsafe.Sizeof(monitorInfoEx{}))}
-	var found bool
 	ds, err := Displays(context.Background())
 	if err != nil || len(ds) == 0 {
 		t.Fatalf("no displays: %v", err)
 	}
-	r, _, _ := procGetMonitorInfoW.Call(uintptr(ds[0].ID), uintptr(unsafe.Pointer(&mi)))
-	found = boolOf(r)
-	if !found {
-		t.Fatal("GetMonitorInfoW rejected the MONITORINFOEXW: the Go layout does not match the C one")
+	mi, err := win32.GetMonitorInfo(win32.HMONITOR(ds[0].ID))
+	if err != nil {
+		t.Fatalf("the OS rejected the MONITORINFOEXW, so the Go layout does not match the C one: %v", err)
 	}
-	if got := utf16ToString(mi.SzDevice[:]); got != ds[0].DeviceName {
+	if got := mi.Device(); got != ds[0].DeviceName {
 		t.Fatalf("szDevice = %q, want %q — the field is at the wrong offset", got, ds[0].DeviceName)
 	}
 	fmt.Fprintf(os.Stderr, "MONITORINFOEXW accepted by the OS, szDevice=%q\n", ds[0].DeviceName)

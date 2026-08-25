@@ -124,11 +124,33 @@ device-context and window-query surface was **added to win32 for this package**
 rather than copied into it — `win32` shipped `StretchDIBitsBGRA`, which takes
 an `HDC`, and no way to obtain one.
 
+The display and window ENUMERATIONS went the same way, in v0.2.0:
+`EnumDisplayMonitors`, `GetMonitorInfoW`, `GetDpiForMonitor`, `EnumWindows` and
+`GetWindowThreadProcessId` are `go-mswin/win32`'s, along with `MONITORINFOEXW`
+and the Per-Monitor-V2 awareness constant. That was a bug fix, not tidying —
+see "the callback ceiling" below.
+
 What stays here is what is genuinely capture-specific: `CreateDIBSection` (bound
 locally because the pointer-out-parameter trick below is the whole point of it),
 the duplication and DWM calls, and the dxgi/d3d11/shcore/dwmapi libraries win32
 does not carry — all bound off win32's own shared DLL handles rather than behind
 a second set of `NewLazySystemDLL` calls.
+
+### The callback ceiling
+
+Both enumerations used to build a `windows.NewCallback` *inside* themselves. The
+Go runtime allocates those from a pool capped at **2000 for the whole process**
+(`runtime.cb_max`) and never frees one, and going past the cap is not a
+recoverable panic — it is `runtime.throw("too many callback functions")`, which
+kills the process. `Shareable()` spent two of the 2000 per call, so it died at
+about a thousand.
+
+Measured, not reasoned about: the released **v0.1.1**, asked `Windows()` in a
+loop on the Win11 ARM64 VM, printed `survived 1750 calls` and then died with
+exactly that fatal error. `go-mswin/win32` keeps one trampoline per enumeration
+for the whole process, so there is no longer any number of calls that does this;
+`TestEnumerationSurvivesPastTheCallbackCeiling` walks 3000 enumerations on every
+Windows CI lane to keep it that way.
 
 ### Why there is no `RtlMoveMemory` on the hot path
 
@@ -175,6 +197,15 @@ set SCREENCAPTURE_LIVE=1
 go test -tags integration -run Live -v .
 go test -tags integration -run XXX -bench . -benchmem .
 ```
+
+**Captures never go in the repository.** The live suite writes to
+`os.UserConfigDir()/go-mswin-screencapture/captures`, or to
+`SCREENCAPTURE_ARTIFACTS` when set — and either way the directory is walked up
+to the filesystem root looking for a `.git`, and REFUSED if one is found. A
+capture is a picture of whatever the machine happened to be showing, and a
+`.gitignore` entry is not a control: it is one `git add -f` away from being
+published forever. The refusal is tested, including for this repository's own
+`testdata/artifacts`.
 
 **Run it in an interactive session.** A process reached over ssh on Windows is
 in session 0: it still reports a display (a 1024x768 phantom) and a capture of

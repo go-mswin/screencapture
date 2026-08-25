@@ -225,3 +225,82 @@ repeated afterwards and compared on the OUTPUT, not on the exit status:
   read-back             GDI 11.7 ms, duplication 2.84 ms (both faster than the
                         pre-migration samples, which is scheduling noise on an
                         emulated framebuffer, not an improvement to claim)
+
+ADDENDUM 2 — re-verified after the migration onto go-mswin/win32 v0.4.0
+-----------------------------------------------------------------------
+Sections 1 and 2 above were taken BEFORE this package stopped hand-rolling
+EnumDisplayMonitors, GetMonitorInfoW, GetDpiForMonitor, EnumWindows and
+GetWindowThreadProcessId. The enumeration is the first thing every capture
+goes through -- it is what decides which monitor, at what DPI, in which
+rectangle -- so the whole proof was re-run rather than assumed to still hold.
+
+Same VM, same 800x600 ramfb, same discipline: launched into session 1 with
+schtasks /it, console HIDDEN through wscript so the desktop was motionless,
+QEMU's own screendump taken seconds after the captures.
+
+    display-gdi.png          vs qemu-screendump-control.png : 0 of 480000 differ
+    display-duplication.png  vs qemu-screendump-control.png : 0 of 480000 differ
+    display-gdi.png          vs display-duplication.png     : 0 of 480000 differ
+
+Stronger than last time, in fact: all THREE files came out byte-identical.
+
+    d9cbd279ea069e71396092bf2e57dcb2920db7fbd1a78146e37a84e7e6ccca51  display-gdi.png
+    d9cbd279ea069e71396092bf2e57dcb2920db7fbd1a78146e37a84e7e6ccca51  display-duplication.png
+    d9cbd279ea069e71396092bf2e57dcb2920db7fbd1a78146e37a84e7e6ccca51  qemu-screendump-control.png
+
+Those three files are NOT committed, and that is deliberate. A screen capture
+must not be written anywhere it can be committed, which is now enforced in code
+(chooseCaptureDir, capturedir_test.go) rather than by care: this run wrote them
+to C:\Users\dev\AppData\Roaming\go-mswin-screencapture\captures on the VM.
+The MATCHED SET in this directory predates that rule, was taken on a disposable
+VM, and stays -- section 0's commands still check it, and CI still runs them.
+
+The whole live suite, not only the two captures:
+
+    TestLiveDisplays                PASS  \\.\DISPLAY1 800x600 @96dpi dxgi=0/0 duplicable=true
+    TestLiveWindows                 PASS
+    TestLiveCaptureGDI              PASS  27.6 ms for 800x600
+    TestLiveCaptureDuplication      PASS  2.8 ms read-back, stride 3200 (+0)
+    TestLiveStrideIsCarried         PASS
+    TestLiveFrameBorrowMovesWithTake PASS
+    TestLiveCloseIsIdempotent       PASS
+    TestLiveStructSizesAgainstTheOS PASS  MONITORINFOEXW accepted, szDevice="\\.\DISPLAY1"
+
+The last one is worth its own line. It now asks through win32.GetMonitorInfo,
+so the OS accepting the structure is direct evidence that the SHARED
+declaration -- the one go-widgets/window also depends on -- has the right
+layout on a real machine.
+
+
+ADDENDUM 3 — the bug the migration actually fixed
+--------------------------------------------------
+Both enumerations used to build a windows.NewCallback INSIDE themselves. The Go
+runtime allocates those from a pool capped at 2000 for the whole process
+(runtime.cb_max) and never frees one, and going past the cap is not a
+recoverable panic: it is runtime.throw("too many callback functions"), which
+kills the process. Shareable() spent two of the 2000 per call.
+
+CONTROL -- the RELEASED v0.1.1, asked Windows() in a loop on this VM:
+
+    survived 1500 Windows() calls
+    survived 1750 Windows() calls
+    fatal error: too many callback functions
+    goroutine 1 gp=0x796b9efc000 m=0 mp=0x7ff76eea7660 [running]:
+    EXITCODE=2
+
+INSTRUMENT -- the migrated package, 1500 Shareable() calls, which is 3000
+enumerations, half again past the cap:
+
+    CALLBACK_CEILING_OK 1500 Shareable() calls = 3000 enumerations, cap is 2000
+    --- PASS (0.29s)
+
+A first control run CORRECTED the diagnosis and is worth recording. The obvious
+reproduction -- NewCallback per call around a closure -- SURVIVES 3000 calls,
+because syscall.NewCallback deduplicates by funcval pointer and a closure that
+captures nothing is a single static funcval that gets cached. The defect needs a
+CAPTURING closure, which is exactly what both of these were: they append to a
+slice. Without that control the bug would have been described wrongly, and the
+guard written for it would have passed against the broken code.
+
+TestEnumerationSurvivesPastTheCallbackCeiling is ungated and needs no desktop,
+so it runs on both Windows CI lanes on every push.

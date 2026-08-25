@@ -44,34 +44,28 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Graphics and shell DLLs this package needs and win32 does not carry.
+// Graphics and compositor DLLs this package needs and win32 does not carry.
+// shcore is no longer among them: the per-monitor DPI query moved to win32
+// with the rest of the display enumeration.
 var (
 	modDXGI   = windows.NewLazySystemDLL("dxgi.dll")
 	modD3D11  = windows.NewLazySystemDLL("d3d11.dll")
-	modShcore = windows.NewLazySystemDLL("shcore.dll")
 	modDwmapi = windows.NewLazySystemDLL("dwmapi.dll")
 )
 
 // The procedures, bound off go-mswin/win32's shared DLL handles where the DLL
 // is one it already owns.
 var (
-	procEnumDisplayMonitors       = win32.User32.NewProc("EnumDisplayMonitors")
-	procGetMonitorInfoW           = win32.User32.NewProc("GetMonitorInfoW")
-	procMonitorFromWindow         = win32.User32.NewProc("MonitorFromWindow")
-	procEnumWindows               = win32.User32.NewProc("EnumWindows")
-	procGetWindowThreadProcessId  = win32.User32.NewProc("GetWindowThreadProcessId")
-	procPrintWindow               = win32.User32.NewProc("PrintWindow")
-	procGetCursorInfo             = win32.User32.NewProc("GetCursorInfo")
-	procGetIconInfo               = win32.User32.NewProc("GetIconInfo")
-	procDrawIconEx                = win32.User32.NewProc("DrawIconEx")
-	procSetWindowDisplayAffinity  = win32.User32.NewProc("SetWindowDisplayAffinity")
-	procGetWindowDisplayAffinity  = win32.User32.NewProc("GetWindowDisplayAffinity")
-	procSetProcessDPIAwarenessCtx = win32.User32.NewProc("SetProcessDpiAwarenessContext")
-	procCreateDIBSection          = win32.Gdi32.NewProc("CreateDIBSection")
-	procGetDpiForMonitor          = modShcore.NewProc("GetDpiForMonitor")
-	procDwmGetWindowAttribute     = modDwmapi.NewProc("DwmGetWindowAttribute")
-	procCreateDXGIFactory1        = modDXGI.NewProc("CreateDXGIFactory1")
-	procD3D11CreateDevice         = modD3D11.NewProc("D3D11CreateDevice")
+	procPrintWindow              = win32.User32.NewProc("PrintWindow")
+	procGetCursorInfo            = win32.User32.NewProc("GetCursorInfo")
+	procGetIconInfo              = win32.User32.NewProc("GetIconInfo")
+	procDrawIconEx               = win32.User32.NewProc("DrawIconEx")
+	procSetWindowDisplayAffinity = win32.User32.NewProc("SetWindowDisplayAffinity")
+	procGetWindowDisplayAffinity = win32.User32.NewProc("GetWindowDisplayAffinity")
+	procCreateDIBSection         = win32.Gdi32.NewProc("CreateDIBSection")
+	procDwmGetWindowAttribute    = modDwmapi.NewProc("DwmGetWindowAttribute")
+	procCreateDXGIFactory1       = modDXGI.NewProc("CreateDXGIFactory1")
+	procD3D11CreateDevice        = modD3D11.NewProc("D3D11CreateDevice")
 )
 
 // Available reports whether this build can capture at all. On Windows it
@@ -100,9 +94,7 @@ func RequestAuthorization() bool { return Authorized() }
 // monitor at 150% scaling is reported as 2560x1440 and every capture comes
 // back at the virtualised size, silently blurry.
 var dpiOnce = sync.OnceFunc(func() {
-	if procSetProcessDPIAwarenessCtx.Find() == nil {
-		procSetProcessDPIAwarenessCtx.Call(dpiAwarenessContextPerMonitorAwareV2)
-	}
+	win32.SetProcessDPIAwarenessContext(win32.DPIAwarenessPerMonitorV2)
 })
 
 // boolOf converts a Win32 BOOL return.
