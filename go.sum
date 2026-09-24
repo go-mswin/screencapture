@@ -1,4 +1,4 @@
-github.com/go-mswin/win32 v0.4.0 h1:0JAvm3XNMxOyfYX1anbtAqxNvxvUA0DZ1SyAUinhMa0=
-github.com/go-mswin/win32 v0.4.0/go.mod h1:ypmW4zosl3mXhy0O39EDbHk+AUjgaXGyFgY5UpX3AxI=
+github.com/go-mswin/win32 v0.5.0 h1:QQGNJAR7IG5DZ/ZlQ9ASSl07pJN85xNzp/RIfA+f7Yk=
+github.com/go-mswin/win32 v0.5.0/go.mod h1:tCVmiQ+p8Y9xa+aCKRxGtuMFNG6vaHvZ5LXbNAahzNs=
 golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
 golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
