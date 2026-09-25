@@ -6,3 +6,5 @@ require (
 	github.com/go-mswin/win32 v0.5.0
 	golang.org/x/sys v0.48.0
 )
+
+require github.com/go-appdirs/outdir v0.2.0

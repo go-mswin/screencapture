@@ -1,3 +1,5 @@
+github.com/go-appdirs/outdir v0.2.0 h1:1TdK1U7d0kaHMIYp3BJkrVJwLxBJtxiDB1eOMTdi0As=
+github.com/go-appdirs/outdir v0.2.0/go.mod h1:A/F6uTrvD3bMiof2UXK5FUNemDN1tC7vOZxi8LdrhJs=
 github.com/go-mswin/win32 v0.5.0 h1:QQGNJAR7IG5DZ/ZlQ9ASSl07pJN85xNzp/RIfA+f7Yk=
 github.com/go-mswin/win32 v0.5.0/go.mod h1:tCVmiQ+p8Y9xa+aCKRxGtuMFNG6vaHvZ5LXbNAahzNs=
 golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
