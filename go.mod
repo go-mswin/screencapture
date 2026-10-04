@@ -1,6 +1,6 @@
 module github.com/go-mswin/screencapture
 
-go 1.26.4
+go 1.27.1
 
 require (
 	github.com/go-mswin/win32 v0.5.0
