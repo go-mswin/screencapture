@@ -305,7 +305,7 @@ runner cannot hold.
 go get github.com/go-mswin/screencapture
 ```
 
-Requires Go 1.26 and, at run time, Windows 8 or later on amd64 or arm64.
+Requires Go 1.27.1 and, at run time, Windows 8 or later on amd64 or arm64.
 Compiles (and reports `ErrUnsupported`) everywhere else.
 
 ## Licence
