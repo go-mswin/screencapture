@@ -5,5 +5,5 @@ go 1.27.1
 require (
 	github.com/go-appdirs/outdir v0.3.0
 	github.com/go-mswin/win32 v0.6.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
